@@ -21,6 +21,7 @@ const logTemplate = document.getElementById("logEntryTemplate");
 const outputContent = document.getElementById("outputContent");
 const conversationStream = document.getElementById("conversationStream");
 const conversationTemplate = document.getElementById("conversationMessageTemplate");
+const localStatusIndicator = document.getElementById("localStatus");
 
 const ACTION_TITLES = {
   send_email: "Email",
@@ -34,6 +35,62 @@ const promptInput = document.getElementById("promptInput");
 const sendPromptButton = document.getElementById("sendPrompt");
 
 let activeTask = null;
+
+const LOCAL_STATUS_CLASSES = [
+  "status-available",
+  "status-unavailable",
+  "status-error",
+  "status-unknown",
+];
+
+function setLocalStatusIndicator(state) {
+  if (!localStatusIndicator) {
+    return;
+  }
+
+  localStatusIndicator.classList.remove(...LOCAL_STATUS_CLASSES);
+
+  if (!state) {
+    localStatusIndicator.classList.add("status-unknown");
+    localStatusIndicator.textContent = "Local model status: unavailable (unknown).";
+    return;
+  }
+
+  const { available, provider, model, message } = state;
+  if (available) {
+    localStatusIndicator.classList.add("status-available");
+    const providerLabel = provider || "local";
+    const modelLabel = model && model !== "<uninitialised>" ? model : "model";
+    localStatusIndicator.textContent = `Local model status: online (${providerLabel} · ${modelLabel}).`;
+  } else {
+    localStatusIndicator.classList.add("status-unavailable");
+    const reason = message || "Local runtime is not responding.";
+    localStatusIndicator.textContent = `Local model status: offline — ${reason}`;
+  }
+}
+
+async function refreshLocalStatus() {
+  if (!localStatusIndicator) {
+    return;
+  }
+
+  try {
+    const response = await fetch("/status/local_model", { cache: "no-store" });
+    if (!response.ok) {
+      throw new HttpError("Unable to check local model status.", response.status);
+    }
+    const data = await response.json();
+    setLocalStatusIndicator(data);
+  } catch (error) {
+    localStatusIndicator.classList.remove(...LOCAL_STATUS_CLASSES);
+    localStatusIndicator.classList.add("status-error");
+    const message =
+      error instanceof HttpError
+        ? error.message || "Unable to reach the server."
+        : "Unable to reach the server.";
+    localStatusIndicator.textContent = `Local model status: error — ${message}`;
+  }
+}
 
 function toggleTask(taskId) {
   if (!taskId || !formsByTask[taskId]) {
@@ -623,6 +680,7 @@ async function handleAssistantPrompt() {
     appendConversationMessage("Assistant", message);
   } finally {
     setBusy(sendPromptButton, false);
+    await refreshLocalStatus();
   }
 }
 
@@ -796,6 +854,7 @@ async function handlePdfSubmit(event) {
     updateOutputPanel("PDF Error", details, { error: true });
   } finally {
     setBusy(button, false);
+    await refreshLocalStatus();
   }
 }
 
@@ -833,3 +892,5 @@ function registerEventListeners() {
 }
 
 registerEventListeners();
+refreshLocalStatus();
+setInterval(refreshLocalStatus, 30000);

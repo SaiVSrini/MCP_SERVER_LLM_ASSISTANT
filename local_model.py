@@ -5,9 +5,9 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-try:
+try:  
     from openai import OpenAI  # type: ignore
-except ImportError:
+except ImportError:  # pragma: no cover - optional dependency
     OpenAI = None  # type: ignore
 
 
@@ -27,6 +27,9 @@ class LocalLlamaRunner:
         self._loaded = False
         self._load_error: Optional[str] = None
 
+    # ------------------------------------------------------------------ #
+    # Public helpers
+    # ------------------------------------------------------------------ #
     def is_available(self) -> bool:
         """Return True when any local backend is ready."""
         self._ensure_engine()
@@ -76,6 +79,9 @@ class LocalLlamaRunner:
             return self.model_path or "<unknown checkpoint>"
         return "<uninitialised>"
 
+    # ------------------------------------------------------------------ #
+    # Internal loading
+    # ------------------------------------------------------------------ #
     def _candidate_providers(self) -> Sequence[str]:
         if self.requested_provider:
             return [self.requested_provider]
@@ -110,13 +116,51 @@ class LocalLlamaRunner:
                 "Try setting LLAMA2_PROVIDER to one of: ollama, llama_cpp, transformers."
             )
 
+    # ------------------------------------------------------------------ #
+    # Provider initializers
+    # ------------------------------------------------------------------ #
     def _init_ollama(self) -> Optional[Tuple[Any, str]]:
+        host = (os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
         try:
             import ollama  # type: ignore
-        except ImportError as exc:
-            self._append_error(f"Ollama Python client not found: {exc}")
-            return None
+        except ImportError:
+            try:
+                import requests  # type: ignore
+            except ImportError as exc:
+                self._append_error(
+                    "Ollama Python client not found and requests is unavailable for fallback: "
+                    f"{exc}"
+                )
+                return None
+
+            class OllamaRESTClient:
+                def __init__(self, base_url: str) -> None:
+                    self.base_url = base_url
+
+                def chat(self, *, model: str, messages: List[Dict[str, str]], options: Dict[str, Any]) -> Any:
+                    payload = {
+                        "model": model,
+                        "messages": messages,
+                        "options": {
+                            "temperature": options.get("temperature", 0.2),
+                            "num_predict": options.get("num_predict"),
+                        },
+                    }
+                    response = requests.post(
+                        f"{self.base_url}/api/chat",
+                        json=payload,
+                        timeout=options.get("timeout", 120),
+                    )
+                    response.raise_for_status()
+                    return response.json()
+
+            return (OllamaRESTClient(host), self.model_name or "llama2")
+
         model = self.model_name or "llama2"
+        client_factory = getattr(ollama, "Client", None)
+        if callable(client_factory):
+            return (client_factory(host=host), model)
+        os.environ.setdefault("OLLAMA_HOST", host)
         return (ollama, model)
 
     def _init_llama_cpp(self) -> Optional[Any]:
@@ -143,7 +187,7 @@ class LocalLlamaRunner:
 
         try:
             return Llama(model_path=model_path, n_ctx=ctx_size)
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover - runtime dependent
             self._append_error(f"llama.cpp failed to load model: {exc}")
             return None
 
@@ -175,10 +219,13 @@ class LocalLlamaRunner:
                 tokenizer=tokenizer,
             )
             return text_pipe
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover - heavy dependency
             self._append_error(f"transformers failed to load model: {exc}")
             return None
 
+    # ------------------------------------------------------------------ #
+    # Provider execution helpers
+    # ------------------------------------------------------------------ #
     def _run_ollama(
         self,
         system_prompt: str,
@@ -188,17 +235,31 @@ class LocalLlamaRunner:
     ) -> Optional[str]:
         client, model = self._engine
         try:
-            response = client.chat(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                options={
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            )
+            chat_callable = getattr(client, "chat", None)
+            if callable(chat_callable):
+                response = chat_callable(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    options={
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
+                    },
+                )
+            else:
+                response = client.chat(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    options={
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
+                    },
+                )
         except Exception as exc:
             self._append_error(f"Ollama execution error: {exc}")
             return None
@@ -250,10 +311,10 @@ class LocalLlamaRunner:
                     max_tokens=max_tokens,
                     stop=["User:", "Assistant:"],
                 )
-            except Exception as exc:
+            except Exception as exc:  # pragma: no cover - runtime dependent
                 self._append_error(f"llama.cpp inference error: {exc}")
                 return None
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover - runtime dependent
             self._append_error(f"llama.cpp inference error: {exc}")
             return None
 
@@ -292,7 +353,7 @@ class LocalLlamaRunner:
                 temperature=temperature,
                 do_sample=temperature > 0,
             )
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover - runtime dependent
             self._append_error(f"transformers inference error: {exc}")
             return None
 
@@ -374,6 +435,9 @@ class LocalModel:
             re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
         ]
 
+    # ------------------------------------------------------------------ #
+    # Metadata helpers
+    # ------------------------------------------------------------------ #
     def _record_call(self, provider: str, *, engine: Optional[str], reason: str) -> None:
         self._last_call = {
             "provider": provider,
@@ -384,6 +448,9 @@ class LocalModel:
     def get_last_call_info(self) -> Dict[str, Optional[str]]:
         return dict(self._last_call)
 
+    # ------------------------------------------------------------------ #
+    # Privacy utilities
+    # ------------------------------------------------------------------ #
     def _contains_private_info(self, text: str) -> bool:
         return any(pattern.search(text) for pattern in self.privacy_patterns)
 
@@ -429,6 +496,9 @@ class LocalModel:
                 redacted.append(line)
         return "\n".join(redacted)
 
+    # ------------------------------------------------------------------ #
+    # Public LLM API
+    # ------------------------------------------------------------------ #
     def complete(self, prompt: str, max_tokens: int = 256) -> str:
         if self._classify_privacy(prompt) != "public":
             return self._process_private_data_locally(prompt, max_tokens=max_tokens, reason="private_prompt")
@@ -446,7 +516,7 @@ class LocalModel:
                     reason="public_prompt",
                 )
                 return response.choices[0].message.content
-            except Exception as exc:
+            except Exception as exc:  # pragma: no cover - network failure
                 self._record_call("openai_error", engine=None, reason=str(exc))
                 return f"Error processing request: {exc}"
 
@@ -725,7 +795,7 @@ class LocalModel:
                     reason="public_documents",
                 )
                 return response.choices[0].message.content
-            except Exception as exc:
+            except Exception as exc:  # pragma: no cover - network failure
                 self._record_call("openai_error", engine=None, reason=str(exc))
                 return f"Error processing request: {exc}"
 

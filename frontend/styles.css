@@ -88,6 +88,36 @@ body::before {
   font-size: 1.05rem;
 }
 
+.status-indicator {
+  margin: 0.6rem auto 0;
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  display: inline-block;
+  font-size: 0.9rem;
+  font-weight: 500;
+  background: rgba(253, 245, 237, 0.16);
+  color: #fdf5ed;
+  border: 1px solid rgba(253, 245, 237, 0.35);
+}
+
+.status-indicator.status-available {
+  background: rgba(59, 153, 90, 0.25);
+  border-color: rgba(59, 153, 90, 0.55);
+  color: #c5f7d7;
+}
+
+.status-indicator.status-unavailable {
+  background: rgba(200, 65, 65, 0.25);
+  border-color: rgba(200, 65, 65, 0.65);
+  color: #ffd5d5;
+}
+
+.status-indicator.status-error {
+  background: rgba(200, 65, 65, 0.25);
+  border-color: rgba(200, 65, 65, 0.65);
+  color: #ffd5d5;
+}
+
 .app-main {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));

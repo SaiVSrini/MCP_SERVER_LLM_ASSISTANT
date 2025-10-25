@@ -766,3 +766,31 @@ async def handle_prompt(req: PromptRequest):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/status/local_model")
+async def local_model_status():
+    """Report whether the local LLaMA runner is available."""
+    available = llm.local_runner.is_available()
+    response: Dict[str, Any] = {
+        "available": available,
+        "provider": llm.local_runner.provider_name,
+        "model": llm.local_runner.model_descriptor,
+        "last_call": llm.get_last_call_info(),
+    }
+    if not available:
+        response["message"] = llm.local_runner.availability_message()
+    return response
+
+
+@app.post("/admin/local_model/initialize")
+async def initialize_local_model():
+    """Explicitly trigger initialization of the local LLaMA runner."""
+    available = llm.local_runner.is_available()
+    response: Dict[str, Any] = {
+        "initialized": available,
+        "provider": llm.local_runner.provider_name,
+        "model": llm.local_runner.model_descriptor,
+        "message": "Local model initialized successfully." if available else llm.local_runner.availability_message(),
+    }
+    return response

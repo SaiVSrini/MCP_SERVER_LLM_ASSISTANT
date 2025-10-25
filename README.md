@@ -102,6 +102,15 @@ uvicorn mcp_server:app --reload
 
 When the server starts it will load `.env`, instantiate the connectors, and expose the REST API on `http://localhost:8000`. The static front-end is available at `/` when the `frontend/` directory is present.
 
+**Using Ollama locally**
+
+1. Install the Ollama daemon and download the desired model (for example `ollama run llama2`).
+2. Install the Python client inside your virtualenv: `pip install ollama`.
+3. Set `LLAMA2_PROVIDER=ollama` (already defaulted in `.env.example`) and optionally `LLAMA2_MODEL=llama2`.
+4. Start the Ollama daemon (`ollama serve`) before launching FastAPI.
+5. When the daemon is offline you will see “Unable to initialize a local LLaMA2 runtime…” in responses and in the frontend banner.
+6. You can force the backend to preload the runner by calling `POST /admin/local_model/initialize`; the response confirms whether the local model is ready.
+
 ### Using the CLI
 
 ```
@@ -125,3 +134,4 @@ Flags:
 - PDF extraction now guards against pages that return `None` from `extract_text()`.
 - Sensitive strings are consistently redacted before returning from endpoints and connectors.
 - The repository avoids inline comments in favor of clear function and variable names, so the code remains readable without extra commentary.
+- If the frontend shows “Local model status: offline — Ollama Python client not found…” install the `ollama` Python package and restart the server.
