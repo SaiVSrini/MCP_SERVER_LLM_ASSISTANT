@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Assistant</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <h1>MCP Assistant</h1>
+      <p class="tagline">Interact with the local agent or trigger a specialized workflow.</p>
+    </header>
+
+    <main class="app-main">
+      <section class="panel agent-panel">
+        <h2>Ask the Assistant</h2>
+        <p class="panel-subtitle">Describe what you need and the agent will decide which tools to use.</p>
+        <textarea id="promptInput" rows="5" placeholder="e.g. Draft a follow-up email to the product team..."></textarea>
+        <button id="sendPrompt" class="primary">Send Prompt</button>
+      </section>
+
+      <section class="panel conversation-panel">
+        <h2>Assistant Conversation</h2>
+        <p class="panel-subtitle">Follow the dialogue and respond with private details directly when requested.</p>
+        <div id="conversationStream" class="conversation-stream empty">
+          <p class="placeholder">Start a conversation to see messages here.</p>
+        </div>
+      </section>
+
+      <section class="panel tasks-panel">
+        <h2>Quick Actions</h2>
+        <p class="panel-subtitle">Jump straight to a specific connector.</p>
+        <div class="task-buttons">
+          <button class="task-toggle" data-task="email">✉️ Email</button>
+          <button class="task-toggle" data-task="search">🌐 Web Search</button>
+          <button class="task-toggle" data-task="pizza">🍕 Pizza Order</button>
+          <button class="task-toggle" data-task="pdf">📄 Ask PDFs</button>
+        </div>
+
+        <form id="emailForm" class="task-form hidden">
+          <h3>Send an Email</h3>
+          <label>
+            To
+            <input type="email" name="to" required placeholder="alex@example.com">
+          </label>
+          <label>
+            Subject
+            <input type="text" name="subject" placeholder="Project update">
+          </label>
+          <label>
+            Body
+            <textarea name="body" rows="4" placeholder="Write your message..."></textarea>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary">Send Email</button>
+            <button type="button" class="secondary cancel-task" data-target="emailForm">Cancel</button>
+          </div>
+        </form>
+
+        <form id="searchForm" class="task-form hidden">
+          <h3>Web Search</h3>
+          <label>
+            Query
+            <input type="text" name="query" required placeholder="Latest AI safety research">
+          </label>
+          <label>
+            Number of Results
+            <input type="number" name="num_results" min="1" max="10" value="5">
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary">Search</button>
+            <button type="button" class="secondary cancel-task" data-target="searchForm">Cancel</button>
+          </div>
+        </form>
+
+        <form id="pizzaForm" class="task-form hidden">
+          <h3>Order Pizza</h3>
+          <fieldset>
+            <legend>Customer</legend>
+            <div class="grid two">
+              <label>
+                First Name
+                <input type="text" name="customer_first_name" required>
+              </label>
+              <label>
+                Last Name
+                <input type="text" name="customer_last_name" required>
+              </label>
+            </div>
+            <div class="grid two">
+              <label>
+                Email
+                <input type="email" name="customer_email" required>
+              </label>
+              <label>
+                Phone
+                <input type="tel" name="customer_phone" required>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Delivery Address</legend>
+            <label>
+              Street
+              <input type="text" name="address_street" required>
+            </label>
+            <div class="grid three">
+              <label>
+                City
+                <input type="text" name="address_city" required>
+              </label>
+              <label>
+                Region
+                <input type="text" name="address_region" required>
+              </label>
+              <label>
+                Postal Code
+                <input type="text" name="address_postal_code" required>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Items</legend>
+            <div class="grid two">
+              <label>
+                Item Code
+                <input type="text" name="item_code" placeholder="14SCREEN" required>
+              </label>
+              <label>
+                Quantity
+                <input type="number" name="item_quantity" min="1" value="1">
+              </label>
+            </div>
+            <label>
+              Special Instructions
+              <textarea name="special_instructions" rows="2" placeholder="Leave at the front desk"></textarea>
+            </label>
+          </fieldset>
+
+          <fieldset>
+            <legend>Payment (optional)</legend>
+            <div class="grid two">
+              <label>
+                Card Number
+                <input type="text" name="payment_card_number" placeholder="4111 1111 1111 1111">
+              </label>
+              <label>
+                Expiration (MM/YY)
+                <input type="text" name="payment_card_expiration" placeholder="01/26">
+              </label>
+            </div>
+            <div class="grid two">
+              <label>
+                CVV
+                <input type="text" name="payment_card_cvv" placeholder="123">
+              </label>
+              <label>
+                Billing Postal Code
+                <input type="text" name="payment_billing_postal_code" placeholder="94107">
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="form-actions">
+            <button type="submit" class="primary">Order Pizza</button>
+            <button type="button" class="secondary cancel-task" data-target="pizzaForm">Cancel</button>
+          </div>
+        </form>
+
+        <form id="pdfForm" class="task-form hidden" enctype="multipart/form-data">
+          <h3>Ask About PDFs</h3>
+          <label>
+            Question
+            <input type="text" name="question" required placeholder="Summarize the contract terms">
+          </label>
+          <label class="file-input">
+            PDF Files
+            <input type="file" name="pdf" accept="application/pdf" multiple required>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary">Ask</button>
+            <button type="button" class="secondary cancel-task" data-target="pdfForm">Cancel</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel log-panel">
+        <h2>Activity</h2>
+        <div id="log" class="log"></div>
+      </section>
+
+      <section class="panel output-panel">
+        <h2>Output</h2>
+        <p class="panel-subtitle">Latest assistant response with full details.</p>
+        <article id="outputContent" class="output-content empty">
+          <p class="placeholder">Run a prompt or action to see the full response here.</p>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <template id="logEntryTemplate">
+    <article class="log-entry">
+      <div class="log-meta">
+        <span class="log-type"></span>
+        <time class="log-time"></time>
+      </div>
+      <pre class="log-content"></pre>
+    </article>
+  </template>
+
+  <template id="conversationMessageTemplate">
+    <article class="conversation-message">
+      <header class="conversation-meta">
+        <span class="conversation-speaker"></span>
+        <time class="conversation-time"></time>
+      </header>
+      <div class="conversation-body"></div>
+    </article>
+  </template>
+
+  <script defer src="/static/main.js"></script>
+</body>
+</html>
