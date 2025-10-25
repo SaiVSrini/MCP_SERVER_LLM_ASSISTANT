@@ -1,58 +1,58 @@
 ## Personal MCP Assistant
 
-This repository hosts a single FastAPI service that exposes a collection of personal assistant skills (email, calendar, document reading, web search, pizza ordering, and free-form question answering). The server routes every request through a privacy-aware language model router that decides when to keep data on the machine and when it is safe to involve OpenAI APIs.
+This project is one FastAPI server with many helper tools (email, calendar, PDF reading, web search, pizza ordering, and free-form Q&A). Every request first goes through a privacy filter that decides if it should stay on your machine or can go out to OpenAI (OpenAI is used only when an API key is set and the text looks safe).
 
 ### High-level flow
 
-1. Environment variables are loaded from `.env` (either through `python-dotenv` or your shell).
-2. `mcp_server.py` starts FastAPI, builds one `LocalModel` instance, and passes it to every connector.
-3. Each HTTP endpoint calls into a connector or into the `LocalModel`.
-4. `LocalModel` uses regex checks to decide if the text is private. Private text stays local and goes to a LLaMA runner. Public text can be sent to OpenAI if an API key is configured.
-5. Results are sanitized before they are returned to the caller.
+1. Environment settings are read from `.env` (loaded by `python-dotenv` or by your shell).
+2. `mcp_server.py` starts FastAPI, builds one shared `LocalModel`, and gives it to every connector.
+3. Each HTTP endpoint either calls the right connector or asks `LocalModel` to help.
+4. `LocalModel` checks the text with simple patterns. Private text stays local and goes to LLaMA. Public text can go to OpenAI if an API key is present.
+5. Before sending anything back, the result is cleaned so sensitive data is hidden.
 
 ### Components
 
-- `local_model.py` — wraps all LLM calls. It drives the local LLaMA runtime (`ollama`, `llama.cpp`, or `transformers`) and the OpenAI Chat Completions API. It also does privacy detection, redaction, and command interpretation.
-- `mcp_server.py` — FastAPI application defining REST endpoints and wiring connectors together.
-- `connectors/` — concrete skills:
+- `local_model.py` — handles every LLM call. It can talk to Ollama, llama.cpp, transformers, or OpenAI. It also spots private data, hides it, and turns natural text into actions.
+- `mcp_server.py` — FastAPI app that declares each endpoint and plugs in the connectors.
+- `connectors/` — the actual skills:
   - `emailer.py` sends Gmail messages.
-  - `scheduler.py` schedules Google Calendar events.
-  - `pdf_processor.py` loads PDFs with PyPDF2, redacts sensitive text, and exposes it to the LLM.
-  - `web_searcher.py` queries Google Custom Search, Serper.dev, a basic Google scrape, or DuckDuckGo, in that priority order.
-  - `pizza_orderer.py` places Domino’s orders through `pizzapi`.
-- `frontend/` — static page served by FastAPI for manual testing.
-- `scripts/assistant_cli.py` — CLI helper that sends prompts to `/assistant/command`.
-- `test_endpoints.py` and `test_dependencies.py` — smoke tests for the API and required packages.
+  - `scheduler.py` creates Google Calendar events.
+  - `pdf_processor.py` reads PDFs with PyPDF2 and hides private text.
+  - `web_searcher.py` tries Google Custom Search, Serper.dev, a Google scrape, then DuckDuckGo.
+  - `pizza_orderer.py` talks to Domino’s through `pizzapi`.
+- `frontend/` — simple web UI served by FastAPI for quick tests.
+- `scripts/assistant_cli.py` — command-line helper that posts to `/assistant/command`.
+- `test_endpoints.py` and `test_dependencies.py` — basic scripts that exercise the API and check imports.
 
 ### Detailed data flow
 
 #### Overall life cycle (applies to the CLI, frontend, or any HTTP client)
 
-1. A user types a request (for example, “Book a meeting with Alex tomorrow at 4 pm”).
-2. The client sends that text to the FastAPI server. The CLI posts to `/assistant/command`; the frontend does the same through JavaScript; direct API calls can hit any endpoint.
-3. FastAPI receives the JSON payload inside `mcp_server.py`. The app already has single instances of `LocalModel` and every connector ready to use.
-4. Before any LLM call happens, the server looks at the request and decides which handler to call. For `/assistant/command`, it goes through the orchestrated workflow described below. For direct routes such as `/email` or `/search`, it jumps straight to the connector after a quick privacy check.
-5. Each handler returns a Python dictionary. Before sending that dictionary back to the user, `sanitize_data` removes or masks any private fields so secrets do not leak to the response.
-6. FastAPI serializes the sanitized dictionary into JSON and sends it back to the client.
+1. The user types a request (for example, “Book a meeting with Alex tomorrow at 4 pm”).
+2. The client sends the request to the FastAPI server. The CLI and frontend use `/assistant/command`; curl can call any endpoint.
+3. `mcp_server.py` receives the JSON. One shared `LocalModel` and all connectors are already loaded.
+4. The server picks the right handler. `/assistant/command` uses the longer flow below. Simple routes like `/email` or `/search` call their connector after a quick privacy check.
+5. Each handler returns a Python dictionary. `sanitize_data` hides or removes any private details before the response leaves the server.
+6. FastAPI sends the cleaned JSON back to the caller.
 
 #### `/assistant/command` step-by-step
 
-1. The raw prompt goes to `LocalModel.interpret_instruction`.
-2. The text is checked with several regular expressions to find passwords, tokens, emails, card numbers, dates of birth, and similar private strings.
-3. If sensitive content is detected, the prompt is sent to the local LLaMA runner immediately. If not, the model first replaces obvious identifiers with placeholders (for example, turns an email into `[EMAIL_0]`) and checks again.
-4. When the sanitized prompt is safe, the OpenAI Chat Completions API is used (through the `openai` client). When it is not safe, the local model is used instead. Either model must return valid JSON that lists the requested actions.
-5. The JSON is normalized into a list of `{action, payload}` entries and optional clarification questions.
-6. The server iterates over the actions. Depending on the action name it calls:
+1. The prompt is sent to `LocalModel.interpret_instruction`.
+2. Regular expressions look for private markers such as passwords, tokens, emails, cards, and birth dates.
+3. If private markers appear, the prompt goes straight to the local LLaMA runner. If not, obvious identifiers are replaced with placeholders (for example `[EMAIL_0]`) and checked again.
+4. Safe prompts go to OpenAI (when `OPENAI_API_KEY` is set). Private prompts stay on the local model. Both models must return valid JSON describing the requested work.
+5. The JSON is flattened into a list of `{action, payload}` entries plus any clarification questions.
+6. Each action is executed in turn:
    - `Emailer.send` for `send_email`
    - `Scheduler.schedule_meeting` for `schedule_meeting`
    - `WebSearcher.search` for `search_web`
    - `PDFProcessor.process` combined with `LocalModel.answer_from_documents` for `pdf_question`
    - `PizzaOrderer.place_order` for `order_pizza`
    - `LocalModel.complete` or `answer_from_documents` for `answer_question`
-7. Every connector can call back into `LocalModel` when it needs a follow-up answer under privacy rules (for example, document QA).
-8. If a connector reports missing data (no recipient email, no meeting time, etc.), the server does not fail the whole request. Instead it collects the clarification prompt and adds it to the response so the user knows what to provide next.
-9. The combined results and clarifications pass through `sanitize_data`, which redacts email addresses, payment blocks, PDF contents, and other sensitive fields.
-10. The final JSON is returned to the client.
+7. Connectors can call `LocalModel` again if they need another answer while keeping data local (for example, PDF Q&A).
+8. Missing details (no recipient, no start time, etc.) produce clarification questions instead of errors.
+9. Results and clarifications run through `sanitize_data`, which hides emails, payment info, PDF text, and similar fields.
+10. The final cleaned JSON is returned to the caller.
 
 #### Direct task endpoints
 
@@ -61,7 +61,7 @@ This repository hosts a single FastAPI service that exposes a collection of pers
 - `/meeting` and `/meeting/schedule` convert times into `datetime` objects, validate the range, and forward the request to `Scheduler.schedule_meeting`.
 - `/pdf` accepts a base64 string, decodes it, extracts text with `PDFProcessor`, redacts the text, and returns the safe version.
 - `/pdf/query` reads files from disk, extracts text, asks `LocalModel.answer_from_documents`, and redacts the response.
-- `/assistant/pdf_question` uploads document bytes directly, processes them, and then calls the same QA helper as above.
+- `/assistant/pdf_question` uploads PDF files, extracts text, and runs the same QA helper.
 - `/web/search` and `/search` run a privacy check on the query, then call `WebSearcher` which tries Google Custom Search, Serper.dev, scrape, and DuckDuckGo in order.
 - `/pizza` and `/pizza/order` validate the Domino’s order payload locally, scrub special instructions, and place the order when live mode is enabled.
 - `/health` returns `{"status": "ok"}` without touching the LLM.
@@ -75,7 +75,7 @@ This repository hosts a single FastAPI service that exposes a collection of pers
 - `LLAMA2_MODEL_PATH`, `LLAMA_CPP_MODEL_PATH`, or `TRANSFORMERS_MODEL_PATH` — path to local model weights.
 - `LLAMA_CPP_CTX` — optional context window size for `llama.cpp`.
 
-If the prompt or documents are marked private (regex matches password, token, SSN, credit card, etc.), `LocalModel` always uses the local backend. For public text, it calls OpenAI when `OPENAI_API_KEY` is set. Optional OpenAI settings:
+If a prompt or document looks private (password, token, SSN, card number, etc.), `LocalModel` always uses the local backend and never sends it to OpenAI. Public text can go to OpenAI when `OPENAI_API_KEY` is set. Optional OpenAI settings:
 
 - `OPENAI_API_KEY`
 - `OPENAI_PROJECT`
@@ -100,16 +100,16 @@ pip install -r requirements.txt
 uvicorn mcp_server:app --reload
 ```
 
-When the server starts it will load `.env`, instantiate the connectors, and expose the REST API on `http://localhost:8000`. The static front-end is available at `/` when the `frontend/` directory is present.
+When the server starts it reads `.env`, builds every connector, and exposes the API at `http://localhost:8000`. The static frontend is served at `/` if the `frontend/` folder exists.
 
 **Using Ollama locally**
 
-1. Install the Ollama daemon and download the desired model (for example `ollama run llama2`).
-2. Install the Python client inside your virtualenv: `pip install ollama`.
-3. Set `LLAMA2_PROVIDER=ollama` (already defaulted in `.env.example`) and optionally `LLAMA2_MODEL=llama2`.
-4. Start the Ollama daemon (`ollama serve`) before launching FastAPI.
-5. When the daemon is offline you will see “Unable to initialize a local LLaMA2 runtime…” in responses and in the frontend banner.
-6. You can force the backend to preload the runner by calling `POST /admin/local_model/initialize`; the response confirms whether the local model is ready.
+1. Install Ollama and download the model you want (for example `ollama run llama2`).
+2. (Optional but helpful) install the Python client in your virtualenv: `pip install ollama`.
+3. Put `LLAMA2_PROVIDER=ollama`, `LLAMA2_MODEL=llama2`, and `OLLAMA_HOST` into your `.env`.
+4. Start the Ollama daemon (`ollama serve`) before you run FastAPI. If FastAPI runs in Docker or WSL, bind Ollama to an address the container can reach and point `OLLAMA_HOST` to that address.
+5. If the daemon is down you will see “Unable to initialize a local LLaMA2 runtime…” in API replies and in the frontend banner.
+6. Call `POST /admin/local_model/initialize` to warm up the model and confirm it is ready.
 
 ### Using the CLI
 
@@ -134,4 +134,4 @@ Flags:
 - PDF extraction now guards against pages that return `None` from `extract_text()`.
 - Sensitive strings are consistently redacted before returning from endpoints and connectors.
 - The repository avoids inline comments in favor of clear function and variable names, so the code remains readable without extra commentary.
-- If the frontend shows “Local model status: offline — Ollama Python client not found…” install the `ollama` Python package and restart the server.
+- If the frontend shows “Local model status: offline — Ollama Python client not found…” install the `ollama` Python package (or make sure `OLLAMA_HOST` is reachable) and restart the server.
